@@ -1569,7 +1569,7 @@ int main(int argc, char *argv[]) {
     int T = 1024; // sequence length max
     float learning_rate = 3e-4f;
     int val_loss_every = 20; // every how many steps do we eval validation loss?
-    int val_max_steps = 20; // how many batches max do we eval for validation loss?
+    int val_max_steps = 10; // how many batches max do we eval for validation loss?
     int sample_every = 20; // every how many steps to do inference?
     int genT = 64; // number of steps of inference we will do
     for (int i = 1; i < argc; i+=2) {
