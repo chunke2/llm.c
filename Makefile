@@ -275,6 +275,21 @@ train_gpt2cu: train_gpt2.cu $(NVCC_CUDNN)
 
 train_gpt2fp32cu: train_gpt2_fp32.cu
 	$(NVCC) $(NVCC_FLAGS) $^ $(NVCC_LDFLAGS) $(NVCC_INCLUDES) $(NVCC_LDLIBS) $(CUDA_OUTPUT_FILE)
+# 	./train_gpt2fp32cu > train_gpt2fp32cu.txt
+# 	nsys profile --trace=cuda,cublas,osrt -o nsys_train_gpt2fp32cu ./train_gpt2fp32cu
+# 	ncu --kernel-name matmul_forward_kernel4 --launch-count 1 --set full -f -o ncu_train_gpt2fp32cu ./train_gpt2fp32cu
+	
+train_gpt2fp32cublas: train_gpt2_fp32_cublas.cu
+	$(NVCC) $(NVCC_FLAGS) $^ $(NVCC_LDFLAGS) $(NVCC_INCLUDES) $(NVCC_LDLIBS) $(CUDA_OUTPUT_FILE)
+# 	./train_gpt2fp32cublas > train_gpt2fp32cublas.txt
+# 	nsys profile --trace=cuda,cublas,osrt -o nsys_train_gpt2fp32cublas ./train_gpt2fp32cublas
+# 	ncu --kernel-name matmul_forward_kernel4 --launch-count 1 --set full -f -o ncu_train_gpt2fp32cublas ./train_gpt2fp32cublas
+
+train_gpt2fp32cublast: train_gpt2_fp32_cublast.cu
+	$(NVCC) $(NVCC_FLAGS) $^ $(NVCC_LDFLAGS) $(NVCC_INCLUDES) $(NVCC_LDLIBS) $(CUDA_OUTPUT_FILE)
+# 	./train_gpt2fp32cublast > train_gpt2_fp32_cublast.txt
+# 	nsys profile --trace=cuda,cublas,osrt -o nsys_train_gpt2_fp32_cublast ./train_gpt2fp32cublast
+# 	ncu --kernel-name matmul_forward_kernel4 --launch-count 1 --set full -f -o ncu_train_gpt2_fp32_cublast ./train_gpt2fp32cublast
 
 test_gpt2cu: test_gpt2.cu $(NVCC_CUDNN)
 	$(NVCC) $(NVCC_FLAGS) $(PFLAGS) $^ $(NVCC_LDFLAGS) $(NVCC_INCLUDES) $(NVCC_LDLIBS) $(CUDA_OUTPUT_FILE)
@@ -288,3 +303,8 @@ profile_gpt2cu: profile_gpt2.cu $(NVCC_CUDNN)
 clean:
 	$(REMOVE_FILES) $(TARGETS)
 	$(REMOVE_BUILD_OBJECT_FILES)
+
+
+batch:
+	make train_gpt2fp32cu
+	make train_gpt2fp32cublas
