@@ -19,7 +19,7 @@ the layernorms are connected to the residuals so we += in layernorm backward.
 #include <float.h>
 #include <string.h>
 #include <unistd.h>
-#include <nvtx3/nvToolsExt.h>
+#include <cuda_profiler_api.h>
 
 // GPU / CUDA related
 #include <cublas_v2.h>
@@ -314,6 +314,15 @@ __global__ void gelu_forward_kernel(float* out, const float* inp, int N) {
         float xi = inp[i];
         float cube = 0.044715f * xi * xi * xi;
         out[i] = 0.5f * xi * (1.0f + tanhf(GELU_SCALING_FACTOR * (xi + cube)));
+    }
+}
+
+__global__ void add_bias_kernel(float* out, const float* bias, int M, int OC) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int i = idx; i < M * OC; i += stride) {
+        int col = i % OC;
+        out[i] += bias[col];
     }
 }
 
@@ -722,20 +731,21 @@ void layernorm_forward(float* out, float* mean, float* rstd,
     cudaCheck(cudaGetLastError());
 }
 
-// kernel 1 is the most naive matmul kernel
 void matmul_forward(float* out,
                     const float* inp, const float* weight, const float* bias,
                     int B, int T, int C, int OC) {
-    // out is (B,T,OC). OC is short for "output channels", e.g. OC = 4 * C
-    // inp is (B,T,C), weight is (OC, C), bias is (OC)
-    nvtxRangePush("CustomKernel");
-    int sqrt_block_size = 16;
-
-    dim3 gridDim(CEIL_DIV(B * T, 8*sqrt_block_size), CEIL_DIV(OC, 8*sqrt_block_size));
-    dim3 blockDim(sqrt_block_size, sqrt_block_size);
-    matmul_forward_kernel4<<<gridDim, blockDim>>>(out, inp, weight, bias, C, OC);
-    cudaCheck(cudaGetLastError());
-    nvtxRangePop();
+    const float one = 1.0f;
+    const float zero = 0.0f;
+    // forward pass: out = inp @ weight^T
+    cublasCheck(cublasSgemm(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N, OC, B*T, C, &one, weight, C, inp, C, &zero, out, OC));
+    // add bias if given
+    if (bias != NULL) {
+        const int block_size = 1024;
+        int total = B * T * OC;
+        int grid = CEIL_DIV(total, block_size);
+        add_bias_kernel<<<grid, block_size>>>(out, bias, B * T, OC);
+        cudaCheck(cudaGetLastError());
+    }
 }
 
 void attention_forward(float* out, float* qkvr, float* att,
@@ -1275,7 +1285,23 @@ void gpt2_forward(GPT2 *model, int* inputs, int* targets, int B, int T) {
 
         // now do the forward pass
         layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C);
+        bool profile_this = (l == 0); 
+
+        if (profile_this) {
+            // 确保前面的操作都完成了，避免抓到上一层的东西
+            cudaDeviceSynchronize(); 
+            // 开启抓取
+            cudaProfilerStart(); 
+        }
+
         matmul_forward(scratch, l_ln1, l_qkvw, l_qkvb, B, T, C, 3*C);
+        if (profile_this) {
+            // 确保这个 kernel 跑完了再停止
+            cudaDeviceSynchronize(); 
+            // 停止抓取
+            cudaProfilerStop(); 
+        }
+
         attention_forward(l_atty, l_qkvr, l_att, scratch, B, T, C, NH);
         matmul_forward(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);
         residual_forward(l_residual2, residual, l_attproj, B*T*C);
@@ -1568,13 +1594,13 @@ int main(int argc, char *argv[]) {
     const char* train_data_pattern = "dev/data/tinyshakespeare/tiny_shakespeare_train.bin";
     const char* val_data_pattern = "dev/data/tinyshakespeare/tiny_shakespeare_val.bin";
     const char* output_log_file = NULL;
-    int B = 4; // batch size
+    int B = 2; // batch size
     int T = 1024; // sequence length max
     float learning_rate = 3e-4f;
     int val_loss_every = 20; // every how many steps do we eval validation loss?
     int val_max_steps = 20; // how many batches max do we eval for validation loss?
-    int sample_every = 20; // every how many steps to do inference?
-    int genT = 64; // number of steps of inference we will do
+    int sample_every = 60; // every how many steps to do inference?
+    int genT = 10; // number of steps of inference we will do
     for (int i = 1; i < argc; i+=2) {
         if (i + 1 >= argc) { error_usage(); } // must have arg after flag
         if (argv[i][0] != '-') { error_usage(); } // must start with dash
