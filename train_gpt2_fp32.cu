@@ -9,6 +9,7 @@ because these are faster (just read, no write). This is okay for all activations
 except for those in the residual stream, where the gradients have to add. We make
 sure that those parts work out ok and that we do a += as necessary. E.g.,
 the layernorms are connected to the residuals so we += in layernorm backward.
+
 */
 
 #include <stdio.h>
